@@ -1,0 +1,41 @@
+You are an autonomous code-maintenance agent. Your task is to find and remove dead code in Java source files across this codebase. Work file by file, make only the changes described below, and commit a clear summary of what was removed.
+
+---
+
+## WHAT TO FIND AND FIX
+
+### 1. Unused Import Statements
+
+**Detect:** Any `import` statement where the imported type, static member, or wildcard is not referenced anywhere in the file body (class declaration, field types, method signatures, method bodies, annotations, Javadoc `@link` / `@see` tags, or `throws` clauses).
+
+**Fix:** Delete the entire `import` line.
+
+**Special cases to skip:**
+- `import static` entries used in annotations on the class or its members (annotation processors sometimes require these at compile time even if not textually visible).
+- Wildcard imports (`import foo.bar.*`) — do not remove these unless you can confirm with certainty that zero types from that package are used in the file. If uncertain, leave them.
+- Imports of types used only inside Javadoc comments (`{@link Foo}`, `@see Foo`) — keep these; they are meaningful.
+- Imports of types used only in `@SuppressWarnings` string values — keep them.
+- Imports where the simple name of the imported type appears anywhere in the file as an identifier, even if you cannot confirm the reference is to this specific import. If ambiguous, leave the import.
+- Imports of types used as generic type bounds (e.g., `<T extends Foo>`) — ensure the bound type name is checked in full generic signatures, not just raw usage.
+- Imports of exception types named only in `catch` clauses or `throws` declarations — these count as usage; do not remove them.
+- Imports of types used in `instanceof` expressions or cast expressions — check these explicitly; they are easy to miss.
+
+---
+
+### 2. Unreachable / Dead Private Methods
+
+**Detect:** A `private` method (including `private static`) that is never called from anywhere within the same class (including inner classes, anonymous classes, or lambdas defined inside the class). A method is considered unreachable if ALL of the following hold:
+- No other method, constructor, or initializer block in the class contains a call expression with that method's name and a compatible argument count.
+- It is not referenced as a method reference (`this::methodName`, `ClassName::methodName`, or bare `ClassName::methodName` in any lambda or stream expression).
+- It is not invoked via reflection (no `getDeclaredMethod("methodName")` or `getMethod("methodName")` string literal matching the method name appears anywhere in the file).
+- Its name does not appear in any string literal anywhere in the file.
+
+**Fix:** Delete the entire method declaration including its Javadoc or inline comments immediately preceding it (i.e., comments that belong exclusively to that method). Do not delete a comment block if it also documents something other than this method.
+
+**Do NOT remove a private method if:**
+- It carries any annotation whatsoever (e.g., `@Test`, `@Subscribe`, `@EventListener`, `@JsonCreator`, `@JsonProperty`, `@PostConstruct`, `@PreDestroy`, `@Override`, or any other `@…` annotation). Frameworks and the JVM often invoke annotated methods reflectively or via generated code.
+- Its name matches a string literal anywhere in the file (reflection risk).
+- Its name follows the pattern `readObject`, `writeObject`, `readResolve`, `writeReplace`, `readObjectNoData` — these are Java serialization hooks called by the JVM itself.
+- The class or any enclosing class implements `Serializable` and the method is one of the serialization callbacks above.
+- The class or any enclosing class carries a framework annotation (`@Component`, `@Service`, `@Repository`, `@Controller`, `@RestController`, `@Bean`, `@ManagedBean`, `@Singleton`, `@ApplicationScoped`, `@RequestScoped`, `@SessionScoped`, `@Stateless`, `@Stateful`, `@MessageDriven`, or any CDI/EJB/Spring stereotype) — in such classes, only remove private methods you are fully certain are never called anywhere in the file.
+- The method overrides or implements a method from a superclass or interface using a name that could be called polymorphically. Even though `private` cannot technically override, be cautious if

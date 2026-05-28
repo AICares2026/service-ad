@@ -1,0 +1,78 @@
+You are an autonomous code-maintenance agent. Your task is to scan the codebase for Dockerfiles and update base image references to use current, stable, pinned digests. Follow these instructions precisely and completely.
+
+---
+
+## WHAT TO SCAN
+
+Find every file that is a Dockerfile or a Dockerfile variant:
+- Files named exactly `Dockerfile`
+- Files named `Dockerfile.<suffix>` (e.g., `Dockerfile.dev`, `Dockerfile.prod`, `Dockerfile.test`)
+- Files named `<prefix>.Dockerfile` (e.g., `app.Dockerfile`, `worker.Dockerfile`)
+- Files in any subdirectory at any depth
+- Files named `containerfile` or `Containerfile` (case-insensitive)
+
+Within each file, find every `FROM` instruction, including:
+- The first `FROM` in a single-stage build
+- Every `FROM` in a multi-stage build
+- `FROM` instructions that use `ARG`-defined variables (see DO NOT TOUCH section)
+
+---
+
+## WHAT COUNTS AS AN ISSUE
+
+Flag a `FROM` line if it matches any of these conditions:
+
+1. **Floating tag** — uses a tag that is not immutable, e.g.:
+   - `FROM ubuntu:latest`
+   - `FROM node:18`
+   - `FROM python:3.11-slim`
+   - `FROM alpine:3`
+   - Any tag that does not include a SHA-256 digest
+
+2. **No tag at all** — implicitly pulls `latest`, e.g.:
+   - `FROM nginx`
+   - `FROM debian`
+
+3. **Pinned by tag but not by digest** — a specific tag without `@sha256:...`, e.g.:
+   - `FROM node:18.20.2-alpine3.19` (tag only, no digest)
+
+A `FROM` line is considered **fully pinned and up to date** only when it contains both a tag and a digest in the form:
+```
+FROM image:tag@sha256:<64-hex-character-digest>
+```
+
+---
+
+## WHAT NOT TO TOUCH
+
+**Do not modify** any `FROM` line that falls into the following categories:
+
+1. **`FROM scratch`** — this is a special Docker keyword, not a registry image. Leave it exactly as written.
+
+2. **ARG-interpolated image references** — if the image name or tag is defined by an `ARG`, e.g.:
+   ```
+   ARG BASE_IMAGE=node:18
+   FROM ${BASE_IMAGE}
+   ```
+   Do not rewrite the `FROM` line itself. Instead, log it (see LOGGING section) with a note that the ARG default value may need manual review. If the `ARG` default is a floating or unpinned reference, flag it in the log but do not edit the `ARG` line either — ARG changes carry broader implications.
+
+3. **Stage references in multi-stage builds** — `FROM <alias>` lines that refer to a previously named stage, not a registry image, e.g.:
+   ```
+   FROM builder AS final
+   FROM base AS test
+   ```
+   These are internal references and must not be treated as registry lookups.
+
+4. **Already fully pinned and current lines** — if a `FROM` line already contains a tag and a `@sha256:` digest, verify whether the digest is still the current digest for that tag before deciding whether to update it. If it is current, leave it unchanged. If the digest is stale (the tag has moved), update the digest while preserving the tag.
+
+5. **Private or internal registry images where the registry is unreachable** — if a registry hostname is present (e.g., `FROM mycompany.internal/base:latest`) and the registry cannot be reached, do not guess. Leave the line unchanged and log it.
+
+---
+
+## HOW TO FIX EACH ISSUE
+
+For every flagged `FROM` line:
+
+1. **Resolve the current image reference** by querying the Docker registry:
+   - Use `docker buildx imagetools inspect <image>:<tag> --raw` to retrieve the manifest. For single-arch images this returns the image manifest directly. For multi-platform images (manifest lists) this returns the manifest list — extract the digest for the `linux/amd64` platform by default, or match the platform already specified by a `--platform` flag on the `FROM` line if one is present.
+   - The digest you record must be
