@@ -1,0 +1,94 @@
+## Skill: Update Outdated Dependency Versions in build.gradle Files
+
+### Objective
+Scan all `build.gradle` and `build.gradle.kts` files in the repository and update outdated dependency versions to their latest stable releases where the upgrade is safe and compatible.
+
+---
+
+### What to Scan
+
+Search recursively through the entire repository for:
+- `build.gradle` (Groovy DSL)
+- `build.gradle.kts` (Kotlin DSL)
+
+Identify all dependency declarations in the following forms:
+
+**Groovy DSL:**
+```groovy
+implementation 'group:artifact:version'
+api 'group:artifact:version'
+testImplementation 'group:artifact:version'
+compileOnly 'group:artifact:version'
+runtimeOnly 'group:artifact:version'
+annotationProcessor 'group:artifact:version'
+classpath 'group:artifact:version'
+kapt 'group:artifact:version'
+ksp 'group:artifact:version'
+testRuntimeOnly 'group:artifact:version'
+testCompileOnly 'group:artifact:version'
+debugImplementation 'group:artifact:version'
+releaseImplementation 'group:artifact:version'
+implementation group: 'group', name: 'artifact', version: 'version'
+```
+
+**Kotlin DSL:**
+```kotlin
+implementation("group:artifact:version")
+api("group:artifact:version")
+testImplementation("group:artifact:version")
+compileOnly("group:artifact:version")
+runtimeOnly("group:artifact:version")
+annotationProcessor("group:artifact:version")
+classpath("group:artifact:version")
+kapt("group:artifact:version")
+ksp("group:artifact:version")
+testRuntimeOnly("group:artifact:version")
+testCompileOnly("group:artifact:version")
+debugImplementation("group:artifact:version")
+releaseImplementation("group:artifact:version")
+```
+
+Also check:
+- `buildscript` blocks
+- `plugins {}` blocks with explicit version strings in the form `id("plugin.id") version "x.y.z"` or `id 'plugin.id' version 'x.y.z'`
+- `dependencyManagement` or `platform(...)` BOM declarations
+- `enforcedPlatform(...)` declarations
+
+**Do not attempt to parse or modify:**
+- Multi-line string concatenation assembling a version string across lines
+- Dependency notations that use map entries where the version value is anything other than a plain string literal (e.g., `version: someVar`)
+- Inline `exclude` blocks — parse the outer dependency normally but do not treat `group`/`module` inside `exclude {}` as a dependency to update
+
+---
+
+### How to Determine the Latest Stable Version
+
+For each dependency found, query the Maven Central REST API to find the latest stable release:
+
+```
+https://search.maven.org/solrsearch/select?q=g:{group}+AND+a:{artifact}&core=gav&rows=20&wt=json
+```
+
+Parse the response and select the highest version that:
+1. Does **not** contain any pre-release qualifier: `alpha`, `beta`, `rc`, `cr`, `m`, `snapshot`, `preview`, `dev`, `ea`, `milestone` (case-insensitive)
+2. Follows standard semantic versioning (`MAJOR.MINOR.PATCH` or `MAJOR.MINOR`)
+
+When comparing versions, use numeric segment comparison — not lexicographic. For example, `1.9.0` < `1.10.0`.
+
+If Maven Central returns no results, also try the Google Maven repository for Android dependencies:
+```
+https://dl.google.com/dl/android/maven2/{group-path}/{artifact}/maven-metadata.xml
+```
+where `{group-path}` is the group ID with dots replaced by slashes.
+
+Parse the `<versioning><versions>` list from the XML response and apply the same pre-release filtering rules above. Do not rely on the `<release>` or `<latest>` tags, as these sometimes reflect pre-release versions.
+
+If neither source returns a result, leave the dependency unchanged and do not report it as an error.
+
+---
+
+### Safe Upgrade Rules — Apply These Automatically
+
+Only apply a version update when **all** of the following conditions are met:
+
+1. **The current version is a hard
