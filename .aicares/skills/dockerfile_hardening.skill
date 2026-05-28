@@ -1,0 +1,55 @@
+You are an autonomous code-maintenance agent running unsupervised. Your task is to harden Dockerfiles in this codebase by updating base images, removing unnecessary packages, and adding non-root USER directives. Follow every rule below precisely. Do not ask questions. Do not make changes outside the rules defined here.
+
+---
+
+## SCOPE
+
+Scan the entire repository for files named exactly `Dockerfile` or matching the pattern `Dockerfile.*` (e.g., `Dockerfile.prod`, `Dockerfile.dev`). Also scan `docker-compose.yml` and `docker-compose.*.yml` files for inline `build:` blocks only if they reference a Dockerfile you are already modifying — do not edit compose files directly. Ignore files inside `vendor/`, `node_modules/`, `.git/`, and any path containing `test/fixtures` or `testdata`.
+
+---
+
+## RULE 1 — UPDATE BASE IMAGES TO MINIMAL OR DISTROLESS VARIANTS
+
+### What to look for
+`FROM` instructions using bloated or outdated base images. Specifically:
+
+- `FROM ubuntu:*` — full Ubuntu images
+- `FROM debian:*` (non-slim variants, e.g., `debian:bullseye` but not `debian:bullseye-slim`)
+- `FROM centos:*` — CentOS is EOL
+- `FROM fedora:*`
+- `FROM node:*` where the tag does not include `-slim`, `-alpine`, or `-distroless`
+- `FROM python:*` where the tag does not include `-slim` or `-alpine`
+- `FROM golang:*` used as a **final** stage (not a builder stage)
+- `FROM openjdk:*` not ending in `-slim` or `-alpine`
+- `FROM ruby:*` not ending in `-slim` or `-alpine`
+- `FROM alpine:*` — acceptable as-is, do not change
+- `FROM scratch` — acceptable as-is, do not change
+- `FROM gcr.io/distroless/*` — acceptable as-is, do not change
+- `FROM *-slim` or `*-alpine` variants — acceptable as-is, do not change
+
+### What NOT to change (false-positive guard)
+- Any `FROM` that uses an `AS <name>` alias and is **not** the final `FROM` in the file — evaluate stage position before making any substitution.
+- `FROM ubuntu:22.04-minimal` — already minimal, do not change.
+- Any image already tagged with `-slim`, `-alpine`, `-minimal`, or prefixed with `gcr.io/distroless/` — do not change.
+- `FROM ubuntu:*` where the tag ends in `-minimal` — do not change.
+- Images referenced only inside `ARG`/`ENV` variable declarations or comments — do not change.
+- `FROM ${BUILD_IMAGE}` or any `FROM` that uses a variable — do not change; flag as a comment instead (see Flagging rule below).
+
+### How to fix
+
+Apply the following substitutions. Preserve the exact major/minor version number where present; substitute only the image name/tag suffix. If no version tag is specified, use the versioned default shown.
+
+| Current pattern | Replace with |
+|---|---|
+| `FROM ubuntu:22.04` | `FROM ubuntu:22.04-minimal` if a `-minimal` variant exists; otherwise `FROM debian:12-slim` |
+| `FROM ubuntu:20.04` | `FROM debian:11-slim` |
+| `FROM ubuntu:<other>` | `FROM debian:12-slim` |
+| `FROM debian:<version>` (no `-slim`) | `FROM debian:<version>-slim` |
+| `FROM centos:7` | `FROM debian:11-slim` |
+| `FROM centos:8` or `FROM centos:stream*` | `FROM debian:12-slim` |
+| `FROM fedora:*` | `FROM debian:12-slim` |
+| `FROM node:<version>` (no slim/alpine) | `FROM node:<version>-slim` |
+| `FROM node` (no tag) | `FROM node:20-slim` |
+| `FROM python:<version>` (no slim/alpine) | `FROM python:<version>-slim` |
+| `FROM python` (no tag) | `FROM python:3.12-slim` |
+| `FROM golang:*` as **final stage** | `FROM gc
