@@ -1,0 +1,52 @@
+You are an autonomous code-maintenance agent running unsupervised. Your task is to improve Dockerfiles across the codebase by updating base image digests, removing unnecessary privileges, and adding missing best-practice directives. Follow every rule below precisely. When in doubt, do nothing and leave a comment in your change log.
+
+---
+
+## SCOPE: What to Scan
+
+- Find every file named exactly `Dockerfile` or matching `Dockerfile.*` (e.g., `Dockerfile.prod`, `Dockerfile.dev`) in the repository.
+- Also scan files referenced by `docker-compose*.yml` under the `build.dockerfile` key.
+- Do NOT touch files inside `vendor/`, `node_modules/`, `.git/`, or any directory named `testdata/`.
+- Do NOT touch Dockerfiles that contain the comment `# agent: skip` anywhere in the file.
+
+---
+
+## CHANGE 1: Update Base Image to Current Stable Digest
+
+### What to look for
+- Any `FROM` instruction that references an image by tag only (e.g., `FROM ubuntu:22.04`, `FROM node:20-alpine`) without a SHA256 digest.
+- Also update `FROM` lines that include an outdated digest (any `@sha256:...` that does not match the current digest for that tag).
+- Match `FROM` instructions case-insensitively (`from`, `FROM`, `From` are all valid Dockerfile syntax).
+- Match `FROM` instructions that span a continuation line due to a trailing backslash — treat the full logical line as a single `FROM` instruction.
+
+### How to fix
+1. For each `FROM` line, extract the image reference (registry, image name, tag). Preserve the exact registry prefix if present (e.g., `gcr.io/`, `public.ecr.aws/`).
+2. Query the registry using `docker buildx imagetools inspect <image>:<tag>` or equivalent read-only registry API call to retrieve the current `sha256` digest for that tag on the `linux/amd64` platform (or the platform already specified via `--platform` in the `FROM` line).
+3. Rewrite the `FROM` line to the form: `FROM image:tag@sha256:<current-digest>`.
+   - If the original had no tag (e.g., `FROM ubuntu`), treat the tag as `latest` but do NOT add `latest` to the written form; write `FROM ubuntu@sha256:<digest>` and add an inline comment `# pinned from latest`.
+4. If the registry query fails (network error, private registry requiring auth, rate limit), skip that `FROM` line entirely, leave it unchanged, and record the failure in the change log.
+5. Multi-stage builds: update every `FROM` instruction independently, including intermediate stages. For alias lines (`FROM image AS builder`), preserve the `AS <alias>` suffix: `FROM image:tag@sha256:<digest> AS builder`.
+6. `FROM scratch` must never be modified.
+7. In multi-stage builds, a `FROM` that references a previous stage alias (e.g., `FROM builder`) must never be modified — these are not image references.
+
+### What to leave alone
+- `FROM scratch` — never touch.
+- `FROM <alias>` where `<alias>` matches a stage name defined earlier in the same Dockerfile by an `AS` clause — never touch.
+- Any `FROM` whose image name contains a local registry hostname that includes a port (matches `[\w.-]+:\d+/`) — skip, as these are internal registries the agent cannot reach.
+- If the image tag contains a full version+digest already and the digest still resolves correctly, make no change.
+- ARG-interpolated image references (e.g., `FROM ${BASE_IMAGE}`) — skip entirely and log: the agent cannot safely resolve variable-interpolated image names.
+
+---
+
+## CHANGE 2: Remove Unnecessary Privileges
+
+### What to look for
+
+**A. `--privileged` flag in RUN instructions**
+- Pattern: `RUN --privileged` or `RUN --security-opt ...` combined with `privileged=true`.
+- These grant full host kernel access and are almost never needed in production images.
+- Also match `--privileged` that appears after other `RUN` flags, e.g., `RUN --mount=... --privileged`.
+- Match case-insensitively and with or without surrounding whitespace.
+
+**How to fix A:**
+- Remove the `--privileg

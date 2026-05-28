@@ -1,0 +1,61 @@
+## Skill: Remove Unused Java Imports, Unreachable Methods, and Unused Private Fields
+
+You are an autonomous code-maintenance agent. Your task is to scan a Java codebase, identify dead code in three specific categories, and safely remove it. You must operate without human input. Follow every rule below precisely.
+
+---
+
+### WHAT TO SCAN
+
+Recursively scan all `.java` files under the project source root (typically `src/main/java` and `src/test/java`). Exclude files listed in `.gitignore` and anything under `target/`, `build/`, `.gradle/`, or `.idea/` directories.
+
+---
+
+### CATEGORY 1 — UNUSED IMPORTS
+
+**What to detect:**
+- Any `import` statement whose imported type, static member, or wildcard package is never referenced anywhere in the same file's class body, annotations, Javadoc `{@link ...}` tags, or `@see` tags.
+- Duplicate import statements (the same fully-qualified name imported more than once).
+
+**How to fix:**
+- Delete the entire `import` line.
+- Do not collapse multiple specific imports into a wildcard import, and do not expand wildcard imports into specific imports. Leave wildcard imports alone entirely — do not remove them even if they appear unused, because wildcard coverage is not statically determinable without full compilation.
+- After removing imports, do not reformat or reorder the remaining import block.
+
+**Leave alone:**
+- `import static` statements used in annotations (e.g., `@SuppressWarnings`, JUnit `@Test` parameters).
+- Any import referenced only inside a Javadoc comment (`{@link}`, `{@code}`, `@see`).
+- Wildcard imports (`import foo.bar.*`).
+- Imports in files that contain compile errors (identified by unparseable syntax — skip the whole file).
+
+---
+
+### CATEGORY 2 — UNUSED PRIVATE FIELDS
+
+**What to detect:**
+A private instance field or private static field is unused when ALL of the following are true:
+1. It has the `private` access modifier.
+2. Its name does not appear anywhere in the class body except its own declaration line.
+3. It is not annotated with any of the following (or their fully-qualified equivalents): `@Inject`, `@Autowired`, `@Value`, `@Resource`, `@Spy`, `@Mock`, `@Captor`, `@InjectMocks`, `@Persist`, `@Column`, `@Id`, `@Field`, `@JsonProperty`, `@SerializedName`, `@Expose`, `@Getter`, `@Setter`, `@Data`, `@lombok.*`.
+4. The class itself is not annotated with `@Data`, `@Value` (Lombok), or any other Lombok annotation that generates accessors.
+5. It is not a `serialVersionUID` field (i.e., not `private static final long serialVersionUID`).
+6. It is not declared with `@SuppressWarnings("unused")`.
+
+**How to fix:**
+- Delete the entire field declaration, including any annotations placed directly above the field that belong solely to it (i.e., annotations on the same unbroken block of lines immediately preceding the field).
+- Preserve blank lines around the deletion to avoid merging unrelated code blocks — remove the field line(s) and their directly attached annotations, then remove one immediately adjacent blank line only if doing so does not cause two non-blank sections to merge without separation.
+
+**Leave alone:**
+- Fields with any visibility other than `private` (`public`, `protected`, package-private).
+- Fields that appear to be read via reflection indirectly: if the class calls `getDeclaredField`, `getField`, `getDeclaredFields`, or any `reflect` API, skip ALL private field removal in that class.
+- Fields whose names match a pattern used in string literals within the same class (e.g., `"fieldName"` as a string — this may indicate reflective access).
+- Any field in a class implementing `Serializable` where the field type is itself `Serializable` — these may be part of serialized state. Skip field removal in `Serializable` classes entirely.
+- Fields inside interfaces (they are implicitly `public static final`).
+- Enum constant declarations.
+
+---
+
+### CATEGORY 3 — UNREACHABLE PRIVATE METHODS
+
+**What to detect:**
+A private method is unreachable when ALL of the following are true:
+1.
