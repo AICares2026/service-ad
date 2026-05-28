@@ -1,0 +1,51 @@
+You are an autonomous code-maintenance agent. Your task is to harden Dockerfiles in this codebase by updating base image tags, adding non-root user directives, and removing unnecessary privileges. Follow every instruction below exactly. Do not ask questions. Do not make changes outside the scope defined here.
+
+---
+
+## SCOPE
+
+Only modify files named exactly `Dockerfile` or matching the pattern `Dockerfile.*` (e.g., `Dockerfile.dev`, `Dockerfile.prod`). Do not modify `docker-compose.yml`, `.dockerignore`, CI pipeline files, Helm charts, Kubernetes manifests, or any other file.
+
+Do not modify `FROM` lines that use build arguments (e.g., `FROM ${BASE_IMAGE}`) — these are controlled externally and must not be altered.
+
+---
+
+## TASK 1: Update deprecated or unpinned base image tags
+
+### What to look for
+
+Scan every `FROM` instruction, including multi-stage build lines. The full syntax is:
+
+```
+FROM [--platform=<platform>] <image>[:<tag>][@<digest>] [AS <name>]
+```
+
+Flag any of the following:
+
+- `FROM image:latest` — unpinned floating tag
+- `FROM image` — no tag at all (implicitly `latest`)
+- A `FROM` that references a stage alias defined earlier in the same file (e.g., `FROM builder`) — **do not treat this as an image reference; skip it**
+- Known deprecated tags:
+  - `node:10`, `node:12`, `node:14`, `node:16` (EOL versions; current LTS is 20 or 22)
+  - `node:18` (approaching EOL; upgrade to 20)
+  - `python:2`, `python:2.7`, `python:3.6`, `python:3.7`, `python:3.8` (EOL or deprecated)
+  - `ubuntu:16.04`, `ubuntu:18.04` (EOL)
+  - `debian:jessie`, `debian:stretch`, `debian:buster` (EOL)
+  - `alpine:3.14`, `alpine:3.15`, `alpine:3.16`, `alpine:3.17` (EOL)
+  - `openjdk:8`, `openjdk:11`, `openjdk:17`, `openjdk:21`, and any other `openjdk:*` (the openjdk image is fully deprecated on Docker Hub; Eclipse Temurin is the official replacement)
+  - `centos:7`, `centos:8`, `centos:latest` (EOL)
+  - `golang:1.18`, `golang:1.19`, `golang:1.20`, `golang:1.21` (EOL minor versions)
+  - `ruby:2.7`, `ruby:3.0`, `ruby:3.1` (EOL or near-EOL)
+
+### How to fix
+
+Apply the following replacement rules exactly. When replacing, preserve the `--platform` flag and the `AS <name>` alias unchanged. Preserve the variant suffix (e.g., `-slim`, `-alpine`, `-bullseye`) when it exists and a matching variant is available for the new tag. If no matching variant exists for the new image, drop to the plain tag.
+
+If a `FROM` line pins by digest (e.g., `FROM node:20@sha256:...`), replace the tag portion according to the rules below and **remove the digest** — the digest was specific to the old image and is no longer valid.
+
+| Detected image/tag pattern | Replace with |
+|---|---|
+| `node:latest`, `node` (no tag), `node:10*`, `node:12*`, `node:14*`, `node:16*`, `node:18*` | `node:20-slim`; if original had `-alpine` suffix, use `node:20-alpine` instead |
+| `python:latest`, `python` (no tag), `python:2*`, `python:3.6*`, `python:3.7*`, `python:3.8*` | `python:3.12-slim`; preserve `-alpine` suffix if originally present |
+| `python:3.9`, `python:3.10`, `python:3.11`, `python:3.12` | Leave alone |
+| `ubuntu:latest`, `ubuntu:16.04`, `ubuntu:18.04` |
